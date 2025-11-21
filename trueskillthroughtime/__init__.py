@@ -465,7 +465,7 @@ class Player(object):
         )
 
 
-class team_variable(object):
+class TeamVariable(object):
     """
     Internal class representing a team's performance variable in message passing.
 
@@ -511,7 +511,7 @@ class team_variable(object):
         return self.likelihood_win * self.likelihood_lose
 
 
-class diff_messages(object):
+class DiffMessages(object):
     """
     Internal class for performance difference variables in message passing.
 
@@ -641,18 +641,18 @@ class Game(object):
                 res[-1].append(self.teams[t][i].performance() * self.weights[t][i])
         return res
 
-    def performance_teams(self) -> list[team_variable]:
+    def performance_teams(self) -> list[TeamVariable]:
         # Sum of individual performances
         res = []
         for team in self.performance_individuals():
-            res.append(team_variable(suma(team)))
+            res.append(TeamVariable(suma(team)))
         return res
 
-    def difference_teams(self) -> list[diff_messages]:
-        res: list[diff_messages] = []
+    def difference_teams(self) -> list[DiffMessages]:
+        res: list[DiffMessages] = []
         for e in range(len(self) - 1):
             res.append(
-                diff_messages(self.t[self.o[e]].prior - self.t[self.o[e + 1]].prior)
+                DiffMessages(self.t[self.o[e]].prior - self.t[self.o[e + 1]].prior)
             )
         return res
 
