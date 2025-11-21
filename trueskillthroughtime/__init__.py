@@ -928,9 +928,9 @@ class History(object):
 
     def __init__(
         self,
-        composition: list[list[list[str]]],
-        results: list[list[float]] = [],
-        times: list[int] = [],
+        composition: list[list[list[str]]],  # Game[Team[Player[str]]]
+        results: list[list[float]] = [],  # Game[TeamResult[float]]
+        times: list[int] = [],  # GameDate[int]
         priors: dict[str, Player] = dict(),
         mu: float = 0.0,
         sigma: float = 3.0,
@@ -938,7 +938,7 @@ class History(object):
         gamma: float = 0.15,
         p_draw: float = 0.0,
         online: bool = False,
-        weights: list[list[list[float]]] = [],
+        weights: list[list[list[float]]] = [],  # Game[Team[PlayerWeight[float]]]
         obs: list[GameType] = [],
     ):
         """
@@ -977,8 +977,8 @@ class History(object):
         )
 
         self.size: int = 0
-        self.batches: list[list[list[str]]] = []
-        self.bresults: list[list[list[float]]] = []
+        self.batches: list[list[list[list[str]]]] = []  # Day[Game[Team[Player[str]]]]
+        self.bresults: list[list[list[float]]] = []  # Day[Game[TeamResult[float]]]
         self.btimes: list[int] = []
         self.bskills: list[dict[str, Skill]] = []
         self.bweights: list[list[list[list[float]]]] = []
@@ -1106,10 +1106,10 @@ class History(object):
         times = list(range(last_t, len(composition) + last_t)) if not times else times
         for i in range(len(composition)):
             t = times[i]
-            if t in self.batches:
-                i_b = self.batches.index(times[i])
+            if t in self.btimes:
+                i_b = self.btimes.index(times[i])
             else:
-                i_b = len(self.batches)
+                i_b = len(self.btimes)
                 self.btimes.append(t)
                 self.batches.append([])
                 self.bresults.append([])
