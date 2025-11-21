@@ -28,11 +28,11 @@ import math
 from collections import defaultdict
 from enum import Enum
 from math import erfc
+from typing import Any, Iterator, Sequence
 
 import numpy as np
-import scipy
 from scipy.special import erfcinv
-from scipy.stats import norm
+from scipy.stats import norm, poisson
 
 __all__ = [
     "MU",
@@ -45,6 +45,7 @@ __all__ = [
     "Player",
     "Game",
     "History",
+    "GameType",
 ]
 
 inf = math.inf
@@ -53,14 +54,11 @@ sqrt2pi = math.sqrt(2 * math.pi)
 
 MU = 0.0
 SIGMA = 6
-PI = SIGMA**-2
-TAU = PI * MU
-
 BETA = 1.0  # Performance noise std dev
 GAMMA = 0.03  # Skill drift rate
 
 
-def cdf(x, mu=0, sigma=1):
+def cdf(x: float, mu: float = 0.0, sigma: float = 1.0) -> float:
     """
     Cumulative distribution function of a Gaussian distribution.
 
@@ -76,7 +74,7 @@ def cdf(x, mu=0, sigma=1):
     return 0.5 * erfc(z)
 
 
-def pdf(x, mu, sigma):
+def pdf(x: float, mu: float, sigma: float) -> float:
     """
     Probability density function of a Gaussian distribution.
 
@@ -93,7 +91,7 @@ def pdf(x, mu, sigma):
     return normalizer * functional
 
 
-def ppf(p, mu, sigma):
+def ppf(p: float, mu: float, sigma: float) -> float:
     """
     Percent point function (inverse CDF) of a Gaussian distribution.
 
@@ -108,7 +106,7 @@ def ppf(p, mu, sigma):
     return mu - sigma * sqrt2 * erfcinv(2 * p)
 
 
-def v_w(mu, sigma, margin, tie):
+def v_w(mu: float, sigma: float, margin: float, tie: bool) -> tuple[float, float]:
     """
     Compute correction factors v and w for truncated Gaussian moments.
 
@@ -141,7 +139,7 @@ def v_w(mu, sigma, margin, tie):
     return v, w
 
 
-def trunc(mu, sigma, margin, tie):
+def trunc(mu: float, sigma: float, margin: float, tie: bool) -> tuple[float, float]:
     """
     Compute parameters of a truncated Gaussian distribution.
 
@@ -160,7 +158,7 @@ def trunc(mu, sigma, margin, tie):
     return mu_trunc, sigma_trunc
 
 
-def approx(N, margin, tie):
+def approx(N: "Gaussian", margin: float, tie: bool) -> "Gaussian":
     """
     Create a Gaussian approximation of a truncated distribution.
 
@@ -177,7 +175,7 @@ def approx(N, margin, tie):
 
 
 def fixed_point_approx(
-    r: int, mu: float, sigma: float, max_iter: int = 16, tol: float = 1e-6
+    r: float, mu: float, sigma: float, max_iter: int = 16, tol: float = 1e-6
 ) -> tuple[float, float]:
     """
     Gaussian approximation via fixed-point iteration for Poisson observations.
@@ -200,7 +198,7 @@ def fixed_point_approx(
     """
     sigma2 = sigma**2
 
-    def compute_kappa(k_prev):
+    def compute_kappa(k_prev: float) -> float:
         term = k_prev - mu - r * sigma2 - 1
         sqrt_term = math.sqrt(term**2 + 2 * sigma2)
         numerator = mu + r * sigma2 - 1 - k_prev + sqrt_term
@@ -208,7 +206,7 @@ def fixed_point_approx(
 
     #
     # Initialize kappa
-    kappa = 1
+    kappa = 1.0
     #
     # Fixed-point iteration
     i = 0
@@ -228,7 +226,7 @@ def fixed_point_approx(
     return mu_new, math.sqrt(sigma2_new)
 
 
-def compute_margin(p_draw, sd):
+def compute_margin(p_draw: float, sd: float) -> float:
     """
     Compute the draw margin based on draw probability.
 
@@ -259,7 +257,7 @@ class Gaussian(object):
         tau (float): Precision-adjusted mean = mu/sigma²
     """
 
-    def __init__(self, mu=MU, sigma=SIGMA):
+    def __init__(self, mu: float = MU, sigma: float = SIGMA) -> None:
         """
         Initialize a Gaussian distribution.
 
@@ -275,16 +273,16 @@ class Gaussian(object):
         else:
             raise ValueError("sigma should be greater than 0")
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[float]:
         """Allow unpacking: mu, sigma = gaussian_obj"""
         return iter((self.mu, self.sigma))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the Gaussian."""
         return "N(mu={:.6f}, sigma={:.6f})".format(self.mu, self.sigma)
 
     @property
-    def pi(self):
+    def pi(self) -> float:
         """Precision: 1/sigma² (returns inf if sigma=0)"""
         if self.sigma > 0.0:
             return 1 / self.sigma**2
@@ -292,14 +290,14 @@ class Gaussian(object):
             return inf
 
     @property
-    def tau(self):
+    def tau(self) -> float:
         """Precision-adjusted mean: mu/sigma² (returns 0 if sigma=0)"""
         if self.sigma > 0.0:
             return self.mu * self.pi
         else:
-            return 0
+            return 0.0
 
-    def __add__(self, M):
+    def __add__(self, M: "Gaussian") -> "Gaussian":
         """
         Addition of independent Gaussians (convolution).
 
@@ -308,7 +306,7 @@ class Gaussian(object):
         """
         return Gaussian(self.mu + M.mu, math.sqrt(self.sigma**2 + M.sigma**2))
 
-    def __sub__(self, M):
+    def __sub__(self, M: "Gaussian") -> "Gaussian":
         """
         Subtraction of independent Gaussians.
 
@@ -317,7 +315,7 @@ class Gaussian(object):
         """
         return Gaussian(self.mu - M.mu, math.sqrt(self.sigma**2 + M.sigma**2))
 
-    def __mul__(self, M):
+    def __mul__(self, M: "Gaussian" | float | int) -> "Gaussian":
         """
         Multiplication of Gaussians or scalar multiplication.
 
@@ -338,10 +336,10 @@ class Gaussian(object):
         _pi = self.pi + M.pi
         return Gaussian((self.tau + M.tau) / _pi, _pi ** (-1 / 2))
 
-    def __rmul__(self, other):
+    def __rmul__(self, other: "Gaussian") -> "Gaussian":
         return self.__mul__(other)
 
-    def __truediv__(self, M):
+    def __truediv__(self, M: "Gaussian") -> "Gaussian":
         """
         Division of Gaussians (removes the contribution of M from self).
 
@@ -353,7 +351,7 @@ class Gaussian(object):
         _mu = 0.0 if _pi == 0.0 else (self.tau - M.tau) / _pi
         return Gaussian(_mu, _sigma)
 
-    def delta(self, M):
+    def delta(self, M: "Gaussian") -> tuple[float, float]:
         """
         Compute the difference between two Gaussians.
 
@@ -362,11 +360,11 @@ class Gaussian(object):
         """
         return abs(self.mu - M.mu), abs(self.sigma - M.sigma)
 
-    def cdf(self, x):
+    def cdf(self, x: float) -> float:
         """Evaluate CDF at x using scipy.stats.norm"""
         return norm(*self).cdf(x)
 
-    def isapprox(self, M, tol=1e-5):
+    def isapprox(self, M: "Gaussian", tol: float = 1e-5) -> bool:
         """
         Check if two Gaussians are approximately equal.
 
@@ -380,7 +378,7 @@ class Gaussian(object):
         return (abs(self.mu - M.mu) < tol) and (abs(self.sigma - M.sigma) < tol)
 
 
-def suma(Ns):
+def suma(Ns: list[Gaussian]) -> Gaussian:
     """
     Sum a list of independent Gaussian random variables.
 
@@ -396,7 +394,7 @@ def suma(Ns):
     return res
 
 
-def producto(Ns):
+def producto(Ns: list[Gaussian]) -> Gaussian:
     """
     Product of Gaussian PDFs (normalized).
 
@@ -429,7 +427,11 @@ class Player(object):
     """
 
     def __init__(
-        self, prior=Gaussian(MU, SIGMA), beta=BETA, gamma=GAMMA, prior_draw=Ninf
+        self,
+        prior: Gaussian = Gaussian(MU, SIGMA),
+        beta: float = BETA,
+        gamma: float = GAMMA,
+        prior_draw: Gaussian = Ninf,
     ):
         """
         Initialize a Player.
@@ -444,7 +446,7 @@ class Player(object):
         self.beta = beta
         self.gamma = gamma
 
-    def performance(self):
+    def performance(self) -> Gaussian:
         """
         Generate a performance distribution: skill + noise.
 
@@ -453,7 +455,7 @@ class Player(object):
         """
         return self.prior + Gaussian(0, self.beta)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the Player."""
         return "Player(Gaussian(mu=%.3f, sigma=%.3f), beta=%.3f, gamma=%.3f)" % (
             self.prior.mu,
@@ -473,33 +475,38 @@ class team_variable(object):
         likelihood_win: Likelihood message from winning constraint
     """
 
-    def __init__(self, prior, likelihood_lose=Ninf, likelihood_win=Ninf):
+    def __init__(
+        self,
+        prior: Gaussian,
+        likelihood_lose: Gaussian = Ninf,
+        likelihood_win: Gaussian = Ninf,
+    ) -> None:
         """Initialize team variable with prior and likelihood messages."""
         self.prior = prior
         self.likelihood_lose = likelihood_lose
         self.likelihood_win = likelihood_win
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the team variable."""
         return f"Team(prior={self.prior}, likelihood_lose={self.likelihood_lose}, likelihood_win={self.likelihood_win}"
 
     @property
-    def p(self):
+    def p(self) -> Gaussian:
         """Full posterior: prior * all likelihoods"""
         return self.prior * self.likelihood_lose * self.likelihood_win
 
     @property
-    def posterior_win(self):
+    def posterior_win(self) -> Gaussian:
         """Posterior after incorporating lose constraint"""
         return self.prior * self.likelihood_lose
 
     @property
-    def posterior_lose(self):
+    def posterior_lose(self) -> Gaussian:
         """Posterior after incorporating win constraint"""
         return self.prior * self.likelihood_win
 
     @property
-    def likelihood(self):
+    def likelihood(self) -> Gaussian:
         """Combined likelihood from both constraints"""
         return self.likelihood_win * self.likelihood_lose
 
@@ -513,15 +520,29 @@ class diff_messages(object):
         likelihood: Likelihood message from outcome observation
     """
 
-    def __init__(self, prior, likelihood=Ninf):
+    def __init__(self, prior: Gaussian, likelihood: Gaussian = Ninf) -> None:
         """Initialize difference message with prior and likelihood."""
         self.prior = prior
         self.likelihood = likelihood
 
     @property
-    def p(self):
+    def p(self) -> Gaussian:
         """Posterior: prior * likelihood"""
         return self.prior * self.likelihood
+
+
+class GameType(Enum):
+    """
+    Enumeration of observation models for game outcomes.
+
+    - Ordinal: Ranking/placement (win/loss/draw)
+    - Continuous: Continuous scores (e.g., time, distance)
+    - Discrete: Discrete counts (e.g., goals, points scored)
+    """
+
+    Ordinal = 0
+    Continuous = 1
+    Discrete = 2
 
 
 class Game(object):
@@ -550,7 +571,14 @@ class Game(object):
         >>> posteriors = game.posteriors()
     """
 
-    def __init__(self, teams, result=[], p_draw=0.0, weights=[], obs="Ordinal"):
+    def __init__(
+        self,
+        teams: list[list[Player]],
+        result: list[int | float] = [],
+        p_draw: float = 0.0,
+        weights: list[list[float]] = [],
+        obs: GameType = GameType.Ordinal,
+    ):
         """
         Initialize a Game.
 
@@ -562,112 +590,95 @@ class Game(object):
             weights: Player contribution weights (default: all 1.0)
             obs: Observation model - "Ordinal", "Continuous", or "Discrete" (default: "Ordinal")
         """
-        g = self
-        g.teams = teams
-        g.result = (
+        self.teams = teams
+        self.result = (
             result if len(result) == len(teams) else list(range(len(teams) - 1, -1, -1))
         )
         if not weights:
             weights = [[1.0 for p in t] for t in teams]
-        g.weights = weights
-        g.p_draw = p_draw
-        g.o = g.orden()
-        g.t = g.performance_teams()
-        g.d = g.difference_teams()
-        if obs == "Ordinal":
-            g.tie = [g.result[g.o[e]] == g.result[g.o[e + 1]] for e in range(len(g.d))]
-            g.margin = g.margin()
-        else:
-            g.tie = None
-            g.margin = None
-        g.obs = obs
-        g.evidence = 1.0
-        g.likelihoods = self.likelihoods()
+        self.weights = weights
+        self.p_draw = p_draw
+        self.o = orden(self.result, reverse=True)
+        self.t = self.performance_teams()
+        self.d = self.difference_teams()
+        self.tie: list[bool] | None = None
+        self.margin: list[float] | None = None
+        if obs == GameType.Ordinal:
+            self.tie = [
+                self.result[self.o[e]] == self.result[self.o[e + 1]]
+                for e in range(len(self.d))
+            ]
+            self.margin = self.get_margin()
+        self.obs = obs
+        self.evidence = 1.0
+        self.likelihoods = self.get_likelihoods()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the Game."""
         return f"{self.teams}"
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return number of teams in the game."""
         return len(self.teams)
 
-    def orden(self):
-        """
-        Compute the ordering of teams by result (best to worst).
-
-        Returns:
-            list: Indices of teams sorted by result (descending order)
-        """
-        return [
-            i[0]
-            for i in sorted(enumerate(self.result), key=lambda x: x[1], reverse=True)
-        ]
-
-    def margin(self):
-        g = self
+    def get_margin(self) -> list[float]:
         res = []
-        for e in range(len(g.d)):
+        for e in range(len(self.d)):
             sd = math.sqrt(
-                sum([a.beta**2 for a in g.teams[g.o[e]]])
-                + sum([a.beta**2 for a in g.teams[g.o[e + 1]]])
+                sum([a.beta**2 for a in self.teams[self.o[e]]])
+                + sum([a.beta**2 for a in self.teams[self.o[e + 1]]])
             )
-            compute_margin(g.p_draw, sd)
-            res.append(0.0 if g.p_draw == 0.0 else compute_margin(g.p_draw, sd))
+            compute_margin(self.p_draw, sd)
+            res.append(0.0 if self.p_draw == 0.0 else compute_margin(self.p_draw, sd))
         return res
 
-    def performance_individuals(self):
+    def performance_individuals(self) -> list[list[Gaussian]]:
         # Generate individual performances by adding noise to skills
-        res = []
+        res: list[list[Gaussian]] = []
         for t in range(len(self.teams)):
             res.append([])  # Team container
             for i in range(len(self.teams[t])):
-                res[-1].append(self.teams[t][i].performance() * (self.weights[t][i]))
+                res[-1].append(self.teams[t][i].performance() * self.weights[t][i])
         return res
 
-    def performance_teams(self):
+    def performance_teams(self) -> list[team_variable]:
         # Sum of individual performances
         res = []
         for team in self.performance_individuals():
             res.append(team_variable(suma(team)))
         return res
 
-    def difference_teams(self):
-        g = self
-        res = []
-        for e in range(len(g) - 1):
-            res.append(diff_messages(g.t[g.o[e]].prior - g.t[g.o[e + 1]].prior))
+    def difference_teams(self) -> list[diff_messages]:
+        res: list[diff_messages] = []
+        for e in range(len(self) - 1):
+            res.append(
+                diff_messages(self.t[self.o[e]].prior - self.t[self.o[e + 1]].prior)
+            )
         return res
 
-    def partial_evidence(self, i_d):
+    def partial_evidence(self, i_d: int) -> None:
         """Compute partial evidence for a difference variable."""
-        g = self
-        mu, sigma = g.d[i_d].prior
-        if self.obs == "Ordinal":
-            if g.tie[i_d]:
-                self.evidence *= cdf(g.margin[i_d], mu, sigma) - cdf(
-                    -g.margin[i_d], mu, sigma
+        mu, sigma = self.d[i_d].prior
+        if self.obs == GameType.Ordinal:
+            assert self.tie is not None
+            assert self.margin is not None
+            if self.tie[i_d]:
+                self.evidence *= cdf(self.margin[i_d], mu, sigma) - cdf(
+                    -self.margin[i_d], mu, sigma
                 )
             else:
-                self.evidence *= 1 - cdf(g.margin[i_d], mu, sigma)
-        elif self.obs == "Continuous":
+                self.evidence *= 1 - cdf(self.margin[i_d], mu, sigma)
+        elif self.obs == GameType.Continuous:
             self.evidence *= pdf(
-                self.result[g.o[i_d]] - self.result[g.o[i_d + 1]], mu, sigma
+                self.result[self.o[i_d]] - self.result[self.o[i_d + 1]], mu, sigma
             )
-        elif self.obs == "Discrete":
-            r = self.result[g.o[i_d]] - self.result[g.o[i_d + 1]]
+        elif self.obs == GameType.Discrete:
+            r = self.result[self.o[i_d]] - self.result[self.o[i_d + 1]]
             # Monte Carlo Solution
             N = 5000
             hardcoded_lower_bound = 1 / (2 * N)
-            evidence = (
-                sum(
-                    r
-                    == scipy.stats.poisson.rvs(
-                        mu=np.exp(scipy.stats.norm.rvs(size=N, loc=mu, scale=sigma))
-                    )
-                )
-                / N
-            )
+            poisson_rvs = poisson.rvs(mu=np.exp(norm.rvs(size=N, loc=mu, scale=sigma)))
+            evidence = np.sum(r == poisson_rvs) / N
             self.evidence *= hardcoded_lower_bound + evidence
             #
             # Version Guo et al:
@@ -677,73 +688,87 @@ class Game(object):
             # evidence = sum([math.exp(-(lmbda) * (lmbda)**(k/2) * np.i0(2*math.sqrt(lmbda)) for k in range(1,101)])
 
     #
-    def likelihood_difference(self, i_d):
-        g = self
-        if g.obs == "Ordinal":
-            return approx(g.d[i_d].prior, g.margin[i_d], g.tie[i_d]) / g.d[i_d].prior
-        elif g.obs == "Continuous":
-            return Gaussian(self.result[g.o[i_d]] - self.result[g.o[i_d + 1]], 0.0)
-        elif g.obs == "Discrete":
-            r = self.result[g.o[i_d]] - self.result[g.o[i_d + 1]]
-            mu, sigma = g.d[i_d].prior
-            return Gaussian(*fixed_point_approx(r, mu, sigma)) / g.d[i_d].prior
+    def likelihood_difference(self, i_d: int) -> Gaussian:
+        if self.obs == GameType.Ordinal:
+            assert self.tie is not None
+            assert self.margin is not None
+            return (
+                approx(self.d[i_d].prior, self.margin[i_d], self.tie[i_d])
+                / self.d[i_d].prior
+            )
+        elif self.obs == GameType.Continuous:
+            return Gaussian(
+                self.result[self.o[i_d]] - self.result[self.o[i_d + 1]], 0.0
+            )
+        elif self.obs == GameType.Discrete:
+            r = self.result[self.o[i_d]] - self.result[self.o[i_d + 1]]
+            mu, sigma = self.d[i_d].prior
+            return Gaussian(*fixed_point_approx(r, mu, sigma)) / self.d[i_d].prior
 
-    def likelihood_convergence(self):
+    def likelihood_convergence(self) -> list[Gaussian]:
         """Iterate likelihood messages until convergence."""
-        g = self
         for i in range(5):  # Convergence iterations
-            for e in range(len(g.d) - 1):
-                g.d[e].prior = (
-                    g.t[g.o[e]].posterior_win - g.t[g.o[e + 1]].posterior_lose
+            for e in range(len(self.d) - 1):
+                self.d[e].prior = (
+                    self.t[self.o[e]].posterior_win
+                    - self.t[self.o[e + 1]].posterior_lose
                 )
                 if i == 0:
-                    g.partial_evidence(e)
-                g.d[e].likelihood = g.likelihood_difference(e)
-                likelihood_lose = g.t[g.o[e]].posterior_win - g.d[e].likelihood
-                g.t[g.o[e + 1]].likelihood_lose = likelihood_lose
-            for e in range(len(g.d) - 1, 0, -1):
-                g.d[e].prior = (
-                    g.t[g.o[e]].posterior_win - g.t[g.o[e + 1]].posterior_lose
+                    self.partial_evidence(e)
+                self.d[e].likelihood = self.likelihood_difference(e)
+                likelihood_lose = self.t[self.o[e]].posterior_win - self.d[e].likelihood
+                self.t[self.o[e + 1]].likelihood_lose = likelihood_lose
+            for e in range(len(self.d) - 1, 0, -1):
+                self.d[e].prior = (
+                    self.t[self.o[e]].posterior_win
+                    - self.t[self.o[e + 1]].posterior_lose
                 )
-                if i == 0 and e == len(g.d) - 1:
-                    g.partial_evidence(e)
-                g.d[e].likelihood = g.likelihood_difference(e)
-                likelihood_win = g.t[g.o[e + 1]].posterior_lose + g.d[e].likelihood
-                g.t[g.o[e]].likelihood_win = likelihood_win
-        if len(g.d) == 1:
-            g.partial_evidence(0)
-            g.d[0].prior = g.t[g.o[0]].posterior_win - g.t[g.o[1]].posterior_lose
-            g.d[0].likelihood = g.likelihood_difference(0)
-        g.t[g.o[0]].likelihood_win = g.t[g.o[1]].posterior_lose + g.d[0].likelihood
-        g.t[g.o[-1]].likelihood_lose = g.t[g.o[-2]].posterior_win - g.d[-1].likelihood
-        return [g.t[e].likelihood for e in range(len(g.t))]
+                if i == 0 and e == len(self.d) - 1:
+                    self.partial_evidence(e)
+                self.d[e].likelihood = self.likelihood_difference(e)
+                likelihood_win = (
+                    self.t[self.o[e + 1]].posterior_lose + self.d[e].likelihood
+                )
+                self.t[self.o[e]].likelihood_win = likelihood_win
+        if len(self.d) == 1:
+            self.partial_evidence(0)
+            self.d[0].prior = (
+                self.t[self.o[0]].posterior_win - self.t[self.o[1]].posterior_lose
+            )
+            self.d[0].likelihood = self.likelihood_difference(0)
+        self.t[self.o[0]].likelihood_win = (
+            self.t[self.o[1]].posterior_lose + self.d[0].likelihood
+        )
+        self.t[self.o[-1]].likelihood_lose = (
+            self.t[self.o[-2]].posterior_win - self.d[-1].likelihood
+        )
+        return [self.t[e].likelihood for e in range(len(self.t))]
 
-    def likelihood_performance(self):
+    def likelihood_performance(self) -> list[list[Gaussian]]:
         """Compute likelihood messages for individual performances."""
-        g = self
-        performance_individuals = g.performance_individuals()
-        likelihood_teams = g.likelihood_convergence()
+        performance_individuals = self.performance_individuals()
+        likelihood_teams = self.likelihood_convergence()
         # te = p1 + p2 + p3  <=>  p1 = te - (p2 + p3) = te - te_without_i
-        res = []
-        for e in range(len(g.teams)):
+        res: list[list[Gaussian]] = []
+        for e in range(len(self.teams)):
             res.append([])
-            for i in range(len(g.teams[e])):
+            for i in range(len(self.teams[e])):
                 te = likelihood_teams[e]
                 te_without_i = Gaussian(
-                    g.t[e].prior.mu - performance_individuals[e][i].mu,
+                    self.t[e].prior.mu - performance_individuals[e][i].mu,
                     math.sqrt(
-                        g.t[e].prior.sigma ** 2
+                        self.t[e].prior.sigma ** 2
                         - performance_individuals[e][i].sigma ** 2
                     ),
                 )
-                w_i = g.weights[e][i]
+                w_i = self.weights[e][i]
                 inv_w_i = inf if w_i == 0 else 1 / w_i
-                res[-1].append(inv_w_i * (te - te_without_i))
+                res[-1].append((te - te_without_i) * inv_w_i)
         return res
 
-    def likelihood_skill(self):
+    def likelihood_skill(self) -> list[list[Gaussian]]:
         """Compute likelihood messages for player skills."""
-        res = []
+        res: list[list[Gaussian]] = []
         lh_p = self.likelihood_performance()
         for e in range(len(lh_p)):
             res.append([])
@@ -752,19 +777,18 @@ class Game(object):
                 res[-1].append(lh_p[e][i] - noise)
         return res
 
-    def likelihood_analytic(self):
+    def likelihood_analytic(self) -> list[list[Gaussian]]:
         """Compute likelihoods analytically for 2-team games."""
-        g = self
-        g.partial_evidence(0)
-        psi, vartheta = g.d[0].prior
-        psi_div, vartheta_div = g.likelihood_difference(0)
-        res = []
-        for t in range(len(g.t)):
+        self.partial_evidence(0)
+        psi, vartheta = self.d[0].prior
+        psi_div, vartheta_div = self.likelihood_difference(0)
+        res: list[list[Gaussian]] = []
+        for t in range(len(self.t)):
             res.append([])
             lose_case = t == 1
-            for i in range(len(g.teams[g.o[t]])):
-                mu_i, sigma_i = g.teams[g.o[t]][i].prior
-                w_i = g.weights[g.o[t]][i]
+            for i in range(len(self.teams[self.o[t]])):
+                mu_i, sigma_i = self.teams[self.o[t]][i].prior
+                w_i = self.weights[self.o[t]][i]
                 inv_w_i = inf if w_i == 0 else 1 / w_i
                 mu_analytic = mu_i + inv_w_i * (-psi + psi_div) * (-1) ** (lose_case)
                 sigma_analytic = math.sqrt(
@@ -773,16 +797,16 @@ class Game(object):
                     - sigma_i**2
                 )
                 res[-1].append(Gaussian(mu_analytic, sigma_analytic))
-        return [res[0], res[1]] if g.o[0] < g.o[1] else [res[1], res[0]]
+        return [res[0], res[1]] if self.o[0] < self.o[1] else [res[1], res[0]]
 
-    def likelihoods(self):
+    def get_likelihoods(self) -> list[list[Gaussian]]:
         """Compute likelihood messages using appropriate method."""
         if len(self.teams) == 2:
             return self.likelihood_analytic()
         else:
             return self.likelihood_skill()
 
-    def posteriors(self):
+    def posteriors(self) -> list[list[Gaussian]]:
         """
         Compute posterior skill distributions for all players.
 
@@ -791,12 +815,11 @@ class Game(object):
         Returns:
             list: Nested list of Gaussian posteriors, structured as [team][player]
         """
-        g = self
-        res = []
-        for e in range(len(g.teams)):
+        res: list[list[Gaussian]] = []
+        for e in range(len(self.teams)):
             res.append([])
-            for i in range(len(g.teams[e])):
-                res[-1].append(g.teams[e][i].prior * g.likelihoods[e][i])
+            for i in range(len(self.teams[e])):
+                res[-1].append(self.teams[e][i].prior * self.likelihoods[e][i])
         return res
 
 
@@ -815,46 +838,54 @@ class Skill(object):
         online: Online estimate (for online learning mode)
     """
 
-    def __init__(self, bevents=[], forward=Ninf, backward=Ninf, likelihoods=[]):
+    def __init__(
+        self,
+        bevents: list[int] = [],
+        forward: Gaussian = Ninf,
+        backward: Gaussian = Ninf,
+        likelihoods: list[Gaussian] = [],
+    ) -> None:
         """Initialize a Skill variable."""
         self.bevents = bevents
         self.forward = forward
         self.backward = backward
         self.likelihoods = likelihoods
-        self.online = None
+        self.online: Gaussian | None = None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the Skill."""
         return f"Skill(events={self.bevents})"
 
     @property
-    def posterior(self):
+    def posterior(self) -> Gaussian:
         """Full posterior: forward * backward * all likelihoods"""
         return self.forward * self.backward * producto(self.likelihoods)
 
     @property
-    def forward_posterior(self):
+    def forward_posterior(self) -> Gaussian:
         """Forward posterior: forward message * likelihoods"""
         return self.forward * producto(self.likelihoods)
 
     @property
-    def backward_posterior(self):
+    def backward_posterior(self) -> Gaussian:
         """Backward posterior: backward message * likelihoods"""
         return self.backward * producto(self.likelihoods)
 
-    def likelihood(self, e):
+    def likelihood(self, e: int) -> Gaussian:
         """Get likelihood for event e."""
         i = self.bevents.index(e)
         return self.likelihoods[i]
 
-    def update_likelihood(self, e, likelihood):
+    def update_likelihood(self, e: int, likelihood: Gaussian) -> tuple[float, float]:
         """Update likelihood for event e and return step size."""
         i = self.bevents.index(e)
         step = likelihood.delta(self.likelihoods[i])
         self.likelihoods[i] = likelihood
         return step
 
-    def serialize(self):
+    def serialize(
+        self,
+    ) -> dict[str, list[int] | tuple[float, float] | list[tuple[float, float]] | None]:
         """Serialize skill object to dictionary."""
         return {
             "bevents": self.bevents,
@@ -863,20 +894,6 @@ class Skill(object):
             "likelihoods": [(llhd.mu, llhd.sigma) for llhd in self.likelihoods],
             "online": None if not self.online else (self.online.mu, self.online.sigma),
         }
-
-
-class GameType(Enum):
-    """
-    Enumeration of observation models for game outcomes.
-
-    - Ordinal: Ranking/placement (win/loss/draw)
-    - Continuous: Continuous scores (e.g., time, distance)
-    - Discrete: Discrete counts (e.g., goals, points scored)
-    """
-
-    Ordinal = 0
-    Continuous = 1
-    Discrete = 2
 
 
 class History(object):
@@ -911,18 +928,18 @@ class History(object):
 
     def __init__(
         self,
-        composition,
-        results=[],
-        times=[],
-        priors=None,
-        mu=0,
-        sigma=3,
-        beta=1,
-        gamma=0.15,
-        p_draw=0.0,
-        online=False,
-        weights=[],
-        obs=[],
+        composition: list[list[list[str]]],
+        results: list[list[float]] = [],
+        times: list[int] = [],
+        priors: dict[str, Player] = dict(),
+        mu: float = 0.0,
+        sigma: float = 3.0,
+        beta: float = 1.0,
+        gamma: float = 0.15,
+        p_draw: float = 0.0,
+        online: bool = False,
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
     ):
         """
         Initialize a History of games.
@@ -959,46 +976,48 @@ class History(object):
             obs,
         )
 
-        self.size = 0
-        self.batches = []
-        self.bresults = []
-        self.btimes = []
-        self.bskills = []
-        self.bweights = []
-        self.bobs = []
-        self.bevidence = []
+        self.size: int = 0
+        self.batches: list[list[list[str]]] = []
+        self.bresults: list[list[list[float]]] = []
+        self.btimes: list[int] = []
+        self.bskills: list[dict[str, Skill]] = []
+        self.bweights: list[list[list[list[float]]]] = []
+        self.bobs: list[list[GameType]] = []
+        self.bevidence: list[list[float | None]] = []
         self.init_batches(composition, results, times, weights, obs)
         self.mu = mu
         self.sigma = sigma
         self.beta = beta
         self.gamma = gamma
         self.p_draw = p_draw
-        self.priors = defaultdict(
-            lambda: Player(Gaussian(mu, sigma), beta, gamma), priors if priors else {}
+        default_player = Player(Gaussian(mu, sigma), beta, gamma)
+        self.priors = defaultdict(lambda: default_player, priors)
+
+        self._last_message: defaultdict[str, Gaussian] = defaultdict(
+            lambda: Gaussian(0.0, math.inf)
         )
-        self._last_message = None
-        self._last_time = None
+        self._last_time: defaultdict[str, int | None] = defaultdict(lambda: None)
         self.online = online
         self.b_until = 0 if online else len(self.batches)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of the History."""
         return f"History(Events={self.size})"
 
     def check_input(
         self,
-        composition,
-        results,
-        times,
-        priors,
-        mu,
-        sigma,
-        beta,
-        gamma,
-        p_draw,
-        weights,
-        obs,
-    ):
+        composition: list[list[list[str]]],
+        results: list[list[float]],
+        times: list[int],
+        priors: dict[str, Player],
+        mu: float,
+        sigma: float,
+        beta: float,
+        gamma: float,
+        p_draw: float,
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
+    ) -> None:
         """Validate input parameters."""
         self.check_data(composition, results, times, priors, weights, obs)
         if sigma < 0.0:
@@ -1011,12 +1030,20 @@ class History(object):
             raise ValueError("p_draw < 0.0 or p_draw > 1.0")
 
     #
-    def check_data(self, composition, results, times, priors, weights, obs):
+    def check_data(
+        self,
+        composition: list[list[list[str]]],
+        results: list[list[float]],
+        times: list[int],
+        priors: dict[str, Player],
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
+    ) -> None:
         if results and (len(composition) != len(results)):
             raise ValueError("len(composition) != len(results)")
         if times and (len(composition) != len(times)):
             raise ValueError("len(composition) != len(times)")
-        if (priors is not None) and (not isinstance(priors, dict)):
+        if not isinstance(priors, dict):
             raise ValueError("not isinstance(priors, dict)")
         if weights and (len(composition) != len(weights)):
             raise ValueError("len(composition) != len(weights)")
@@ -1024,7 +1051,14 @@ class History(object):
             raise ValueError("len(composition) != len(obs)")
 
     #
-    def init_batches(self, composition, results, times, weights, obs):
+    def init_batches(
+        self,
+        composition: list[list[list[str]]],
+        results: list[list[float]],
+        times: list[int],
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
+    ) -> None:
         """Initialize batches from composition data."""
         times = list(range(len(composition))) if not times else times
         last_time = -inf
@@ -1044,8 +1078,14 @@ class History(object):
             self.add_to_batch(i_b, i_e, composition, results, times, weights, obs)
 
     def add_history(
-        self, composition, results=[], times=[], priors=None, weights=[], obs=[]
-    ):
+        self,
+        composition: list[list[list[str]]],
+        results: list[list[float]],
+        times: list[int],
+        priors: dict[str, Player] = dict(),
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
+    ) -> None:
         """
         Add new games to an existing History.
 
@@ -1079,14 +1119,21 @@ class History(object):
                 self.bevidence.append([])
             self.add_to_batch(i_b, i, composition, results, times, weights, obs)
 
-    def add_to_batch(self, i_b, i, composition, results, times, weights, obs):
+    def add_to_batch(
+        self,
+        i_b: int,
+        i: int,
+        composition: list[list[list[str]]],
+        results: list[list[float]],
+        times: list[int],
+        weights: list[list[list[float]]] = [],
+        obs: list[GameType] = [],
+    ) -> None:
         """Add a single game to a batch."""
         self.batches[i_b].append(composition[i])
         self.bresults[i_b].append(results[i] if results else [])
         self.bweights[i_b].append(weights[i] if weights else [])
-        self.bobs[i_b].append(
-            GameType[obs[i]].value if obs else GameType["Ordinal"].value
-        )
+        self.bobs[i_b].append(obs[i] if obs else GameType.Ordinal)
         self.bevidence[i_b].append(None)
 
         e = len(self.batches[i_b]) - 1
@@ -1098,79 +1145,77 @@ class History(object):
                 else:
                     self.bskills[i_b][name] = Skill(bevents=[e], likelihoods=[Ninf])
 
-    def _in_skills(self, b, forward):
+    def _in_skills(self, b: int, forward: bool) -> None:
         """Propagate messages into a batch (with skill drift)."""
-        h = self
-        for name in h.bskills[b]:
-            old_t = h._last_time[name]
-            elapsed = abs(h.btimes[b] - old_t) if (old_t is not None) else 0
-            gamma = h.priors[name].gamma
-            receive = h._last_message[name] + Gaussian(
+        for name in self.bskills[b]:
+            old_t = self._last_time[name]
+            elapsed = abs(self.btimes[b] - old_t) if (old_t is not None) else 0
+            gamma = self.priors[name].gamma
+            receive = self._last_message[name] + Gaussian(
                 0, min(math.sqrt(elapsed * (gamma**2)), 1.67 * self.sigma)
             )
             if forward:
-                h.bskills[b][name].forward = receive
-                if h.online and not h.bskills[b][name].online:
-                    h.bskills[b][name].online = receive
+                self.bskills[b][name].forward = receive
+                if self.online and not self.bskills[b][name].online:
+                    self.bskills[b][name].online = receive
             else:
-                h.bskills[b][name].backward = receive
+                self.bskills[b][name].backward = receive
 
-    def _up_skills(self, b, e):
+    def _up_skills(self, b: int, e: int) -> tuple[float, float]:
         """Update skills based on a single game within a batch."""
-        h = self
-        g = Game(
-            h.within_priors(b, e),
-            h.bresults[b][e],
-            h.p_draw,
-            h.bweights[b][e],
-            obs=GameType(self.bobs[b][e]).name,
+        game = Game(
+            self.within_priors(b, e),
+            self.bresults[b][e],
+            self.p_draw,
+            self.bweights[b][e],
+            obs=self.bobs[b][e],
         )
-        likelihoods = g.likelihoods
+        likelihoods = game.likelihoods
         if self.online and not self.bevidence[b][e]:
-            self.bevidence[b][e] = g.evidence
+            self.bevidence[b][e] = game.evidence
         if not self.online:
-            self.bevidence[b][e] = g.evidence
-        mu_step_max, sigma_step_max = (0, 0)
-        for t in range(len(h.batches[b][e])):
-            for i in range(len(h.batches[b][e][t])):
-                name = h.batches[b][e][t][i]
-                mu_step, sigma_step = h.bskills[b][name].update_likelihood(
+            self.bevidence[b][e] = game.evidence
+        mu_step_max, sigma_step_max = (0.0, 0.0)
+        for t in range(len(self.batches[b][e])):
+            for i in range(len(self.batches[b][e][t])):
+                name = self.batches[b][e][t][i]
+                mu_step, sigma_step = self.bskills[b][name].update_likelihood(
                     e, likelihoods[t][i]
                 )
                 mu_step_max = max(mu_step_max, mu_step)
                 sigma_step_max = max(sigma_step_max, sigma_step)
         return (mu_step_max, sigma_step_max)
 
-    def _out_skills(self, b, forward):
+    def _out_skills(self, b: int, forward: bool) -> None:
         """Propagate messages out of a batch."""
-        h = self
-        for name in h.bskills[b]:
-            h._last_time[name] = h.btimes[b]
+        for name in self.bskills[b]:
+            self._last_time[name] = self.btimes[b]
             if forward:
-                h._last_message[name] = h.bskills[b][name].forward_posterior
+                self._last_message[name] = self.bskills[b][name].forward_posterior
             else:
-                h._last_message[name] = h.bskills[b][name].backward_posterior
+                self._last_message[name] = self.bskills[b][name].backward_posterior
 
-    def within_priors(self, b, e, online=False):
+    def within_priors(self, b: int, e: int, online: bool = False) -> list[list[Player]]:
         """Get player priors for a game (excluding its own likelihood)."""
-        h = self
-        priors = []
-        for t in range(len(h.batches[b][e])):
+        priors: list[list[Player]] = []
+        for t in range(len(self.batches[b][e])):
             priors.append([])
-            for i in range(len(h.batches[b][e][t])):
-                name = h.batches[b][e][t][i]
+            for i in range(len(self.batches[b][e][t])):
+                name = self.batches[b][e][t][i]
                 if not online:
-                    prior = h.bskills[b][name].posterior / h.bskills[b][
+                    prior = self.bskills[b][name].posterior / self.bskills[b][
                         name
                     ].likelihood(e)
                 else:
-                    prior = h.bskills[b][name].online
+                    _online = self.bskills[b][name].online
+                    assert _online is not None
+                    prior = _online
                 priors[-1].append(
-                    Player(prior, h.priors[name].beta, h.priors[name].gamma)
+                    Player(prior, self.priors[name].beta, self.priors[name].gamma)
                 )
         return priors
 
-    def forward_propagation(self):
+    def forward_propagation(self) -> tuple[float, float]:
         """
         Forward pass: propagate skill estimates from past to future.
 
@@ -1180,23 +1225,23 @@ class History(object):
         Returns:
             tuple: (max_mu_step, max_sigma_step) - maximum likelihood change
         """
-        h = self
-        h._last_message = defaultdict(
-            lambda: Gaussian(h.mu, h.sigma), {k: v.prior for k, v in h.priors.items()}
+        self._last_message = defaultdict(
+            lambda: Gaussian(self.mu, self.sigma),
+            {k: v.prior for k, v in self.priors.items()},
         )
-        h._last_time = defaultdict(lambda: None)
-        mu_step_max = 0
-        sigma_step_max = 0
-        for b in range(h.b_until):
-            h._in_skills(b, forward=True)
-            for e in range(len(h.batches[b])):
-                mu_step, sigma_step = h._up_skills(b, e)
+        self._last_time = defaultdict(lambda: None)
+        mu_step_max = 0.0
+        sigma_step_max = 0.0
+        for b in range(self.b_until):
+            self._in_skills(b, forward=True)
+            for e in range(len(self.batches[b])):
+                mu_step, sigma_step = self._up_skills(b, e)
                 mu_step_max = max(mu_step_max, mu_step)
                 sigma_step_max = max(sigma_step_max, sigma_step)
-            h._out_skills(b, forward=True)
+            self._out_skills(b, forward=True)
         return (mu_step_max, sigma_step_max)
 
-    def backward_propagation(self):
+    def backward_propagation(self) -> tuple[float, float]:
         """
         Backward pass: propagate skill estimates from future to past.
 
@@ -1206,24 +1251,23 @@ class History(object):
         Returns:
             tuple: (max_mu_step, max_sigma_step) - maximum likelihood change
         """
-        h = self
-        h._last_message = defaultdict(lambda: Gaussian(0.0, math.inf))
-        h._last_time = defaultdict(lambda: None)
-        mu_step_max = 0
-        sigma_step_max = 0
-        h._out_skills(h.b_until - 1, forward=False)
-        for b in reversed(range(h.b_until - 1)):
-            h._in_skills(b, forward=False)
-            for e in range(len(h.batches[b])):
-                mu_step, sigma_step = h._up_skills(b, e)
+        self._last_message = defaultdict(lambda: Gaussian(0.0, math.inf))
+        self._last_time = defaultdict(lambda: None)
+        mu_step_max = 0.0
+        sigma_step_max = 0.0
+        self._out_skills(self.b_until - 1, forward=False)
+        for b in reversed(range(self.b_until - 1)):
+            self._in_skills(b, forward=False)
+            for e in range(len(self.batches[b])):
+                mu_step, sigma_step = self._up_skills(b, e)
                 mu_step_max = max(mu_step_max, mu_step)
                 sigma_step_max = max(sigma_step_max, sigma_step)
-            h._out_skills(b, forward=False)
-        h._last_message = None
-        h._last_time = None
+            self._out_skills(b, forward=False)
+        self._last_message = defaultdict(lambda: Gaussian(0.0, math.inf))
+        self._last_time = defaultdict(lambda: None)
         return (mu_step_max, sigma_step_max)
 
-    def iteration(self):
+    def iteration(self) -> tuple[float, float]:
         """
         Perform one complete iteration: forward pass followed by backward pass.
 
@@ -1234,7 +1278,9 @@ class History(object):
         mu_backward, sigma_backward = self.backward_propagation()
         return (max(mu_forward, mu_backward), max(sigma_forward, sigma_backward))
 
-    def convergence(self, iterations=8, epsilon=0.00001, verbose=True):
+    def convergence(
+        self, iterations: int = 8, epsilon: float = 0.00001, verbose: bool = True
+    ) -> tuple[tuple[float, float], int]:
         """
         Run iterative message passing until convergence.
 
@@ -1253,6 +1299,7 @@ class History(object):
         i = 0
         delta = math.inf
         self.unveil_batch()
+        step = (0.0, 0.0)
         for _ in range(1 + len(self.batches) - self.b_until):
             i = 0
             delta = math.inf
@@ -1269,12 +1316,14 @@ class History(object):
             self.unveil_batch()
         return step, i
 
-    def unveil_batch(self):
+    def unveil_batch(self) -> None:
         """Unveil the next batch for online processing."""
         if self.b_until < len(self.batches):
             self.b_until += 1
 
-    def learning_curves(self, who=None, online=False):
+    def learning_curves(
+        self, who: list[str] = [], online: bool = False
+    ) -> dict[str, list[tuple[int, Gaussian | None]]]:
         """
         Extract learning curves (skill over time) for players.
 
@@ -1290,16 +1339,15 @@ class History(object):
             >>> for time, skill in lc["alice"]:
             ...     print(f"Time {time}: mu={skill.mu:.2f}, sigma={skill.sigma:.2f}")
         """
-        h = self
-        res = dict()
-        for b in range(len(h.bskills)):
-            time = h.btimes[b]
-            for name in h.bskills[b]:
-                if (who is None) or (name in who):
+        res: dict[str, list[tuple[int, Gaussian | None]]] = dict()
+        for b in range(len(self.bskills)):
+            time = self.btimes[b]
+            for name in self.bskills[b]:
+                if (len(who) == 0) or (name in who):
                     if self.online and online:
-                        skill = h.bskills[b][name].online
+                        skill = self.bskills[b][name].online
                     else:
-                        skill = h.bskills[b][name].posterior
+                        skill = self.bskills[b][name].posterior
                     t_p = (time, skill)
                     if name in res:
                         res[name].append(t_p)
@@ -1307,7 +1355,7 @@ class History(object):
                         res[name] = [t_p]
         return res
 
-    def log_evidence(self):
+    def log_evidence(self) -> float:
         """
         Compute the log marginal likelihood of all observed game outcomes.
 
@@ -1326,7 +1374,7 @@ class History(object):
             ]
         )
 
-    def geometric_mean(self):
+    def geometric_mean(self) -> float:
         """
         Compute the geometric mean of game outcome probabilities.
 
@@ -1338,7 +1386,7 @@ class History(object):
         )
         return math.exp(self.log_evidence() / unveil_size)
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         """
         Prepare History for pickling (serialization).
 
@@ -1355,12 +1403,13 @@ class History(object):
         del state["_last_time"]
 
         # Convert all Skill objects to their serializable form
-        for bskill in state["bskills"]:
+        bskills: list[dict[str, Any]] = state["bskills"]
+        for bskill in bskills:
             for name in bskill:
                 bskill[name] = bskill[name].serialize()
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, Any]) -> None:
         """
         Restore History from pickled state (deserialization).
 
@@ -1396,7 +1445,7 @@ class History(object):
         self.__dict__.update(state)
 
 
-def orden(xs, reverse=True):
+def orden(xs: Sequence[float | int], reverse: bool = True) -> list[int]:
     """
     Return indices that sort a list.
 
